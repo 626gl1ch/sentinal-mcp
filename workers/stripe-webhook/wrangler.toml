@@ -1,0 +1,7 @@
+name = "bastionmcp-stripe-webhook"
+main = "src/index.ts"
+compatibility_date = "2026-07-01"
+
+[vars]
+ENVIRONMENT = "production"
+SUPABASE_URL = "https://your-supabase-project.supabase.co"

@@ -1,0 +1,29 @@
+{
+  "name": "bastionmcp-monorepo",
+  "version": "1.0.0",
+  "private": true,
+  "workspaces": [
+    "workers/gateway",
+    "workers/connectors/mt5",
+    "workers/connectors/bybit",
+    "workers/stripe-webhook",
+    "workers/connectors/tradingview",
+    "workers/connectors/fred",
+    "workers/connectors/ohlcv",
+    "workers/telegram-bot",
+    "web"
+  ],
+  "scripts": {
+    "dev:gateway": "wrangler dev --cwd workers/gateway",
+    "dev:mt5": "wrangler dev --cwd workers/connectors/mt5",
+    "dev:bybit": "wrangler dev --cwd workers/connectors/bybit",
+    "dev:web": "vite web",
+    "test": "vitest run",
+    "typecheck": "npm run typecheck --workspaces"
+  },
+  "devDependencies": {
+    "typescript": "^5.5.3",
+    "wrangler": "^3.63.2",
+    "vitest": "^1.6.0"
+  }
+}

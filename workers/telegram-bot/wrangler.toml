@@ -1,0 +1,14 @@
+name = "bastionmcp-telegram-bot"
+main = "src/index.ts"
+compatibility_date = "2026-07-01"
+
+[vars]
+ENVIRONMENT = "development"
+SUPABASE_URL = "https://your-supabase-project.supabase.co"
+
+[[services]]
+binding = "BYBIT_CONNECTOR"
+service = "bastionmcp-connector-bybit"
+
+[triggers]
+crons = ["* * * * *"]

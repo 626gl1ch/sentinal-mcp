@@ -1,0 +1,31 @@
+name = "bastionmcp-gateway"
+main = "src/index.ts"
+compatibility_date = "2026-07-01"
+
+[vars]
+ENVIRONMENT = "development"
+SUPABASE_URL = "https://your-supabase-project.supabase.co"
+
+[[kv_namespaces]]
+binding = "RATE_LIMIT"
+id = "RATE_LIMIT_KV_ID"
+
+[[services]]
+binding = "MT5_CONNECTOR"
+service = "bastionmcp-connector-mt5"
+
+[[services]]
+binding = "BYBIT_CONNECTOR"
+service = "bastionmcp-connector-bybit"
+
+[[services]]
+binding = "TRADINGVIEW_CONNECTOR"
+service = "bastionmcp-connector-tradingview"
+
+[[services]]
+binding = "FRED_CONNECTOR"
+service = "bastionmcp-connector-fred"
+
+[[services]]
+binding = "OHLCV_CONNECTOR"
+service = "bastionmcp-connector-ohlcv"

@@ -1,0 +1,369 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>BastionMCP — Secure Broker Gateway</title>
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Outfit:wght@400;500;600;700&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="/src/style.css" />
+  </head>
+  <body>
+    <div id="app">
+      <!-- Auth Screen -->
+      <div id="auth-screen" class="hidden container">
+        <div class="auth-card glass-panel">
+          <div class="terminal-header">
+            <span class="dot red"></span>
+            <span class="dot yellow"></span>
+            <span class="dot green"></span>
+            <span class="terminal-title">bastion_auth.sh</span>
+          </div>
+          <div class="auth-body">
+            <h1 class="logo glow-text">BASTION<span>MCP</span></h1>
+            <p class="subtitle">Secure, read-only AI access to your trading accounts.</p>
+
+            <form id="auth-form">
+              <div class="form-group">
+                <label for="auth-email">Email Address</label>
+                <input type="email" id="auth-email" required placeholder="user@domain.com" />
+              </div>
+              <div class="form-group">
+                <label for="auth-password">Password</label>
+                <input type="password" id="auth-password" required placeholder="••••••••" />
+              </div>
+              
+              <div class="auth-actions">
+                <button type="submit" id="btn-login" class="btn primary">Execute Log In</button>
+                <button type="button" id="btn-signup" class="btn secondary">Register Account</button>
+              </div>
+            </form>
+            <div id="auth-error" class="error-msg hidden"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Main Dashboard Layout -->
+      <div id="dashboard-layout" class="hidden">
+        <!-- Sidebar -->
+        <aside class="sidebar">
+          <div class="sidebar-header">
+            <div class="logo glow-text">BASTION<span>MCP</span></div>
+            <div class="status-indicator">
+              <span class="pulse-dot green"></span>
+              <span class="status-text">GATEWAY ONLINE</span>
+            </div>
+          </div>
+
+          <nav class="sidebar-nav">
+            <button class="nav-item active" data-tab="tab-overview">
+              <span class="icon">⌂</span> Overview
+            </button>
+            <button class="nav-item" data-tab="tab-vault">
+              <span class="icon">⚿</span> Credentials Vault
+            </button>
+            <button class="nav-item" data-tab="tab-keys">
+              <span class="icon">🔑</span> API Keys
+            </button>
+            <button class="nav-item" data-tab="tab-bot">
+              <span class="icon">🤖</span> Trading Bot
+            </button>
+            <button class="nav-item" data-tab="tab-audit">
+              <span class="icon">▤</span> Security Audit Log
+            </button>
+          </nav>
+
+          <div class="sidebar-footer">
+            <div class="user-info">
+              <div class="user-email" id="user-display-email">user@domain.com</div>
+              <div class="user-tier" id="user-display-tier">Tier: Free</div>
+            </div>
+            <button id="btn-logout" class="btn logout-btn">Log Out</button>
+          </div>
+        </aside>
+
+        <!-- Main Content Area -->
+        <main class="main-content">
+          <!-- Overview Tab -->
+          <section id="tab-overview" class="tab-panel">
+            <div class="page-header">
+              <h1>System Overview</h1>
+              <p class="description">Dashboard status and operational metrics.</p>
+            </div>
+
+            <!-- Stats Grid -->
+            <div class="stats-grid">
+              <div class="stat-card glass-panel">
+                <div class="stat-label">Active Credentials</div>
+                <div class="stat-value" id="stat-active-credentials">0</div>
+                <div class="stat-desc">Secure vaults configured</div>
+              </div>
+              <div class="stat-card glass-panel">
+                <div class="stat-label">API Keys Registered</div>
+                <div class="stat-value" id="stat-api-keys">0</div>
+                <div class="stat-desc">Client access credentials</div>
+              </div>
+              <div class="stat-card glass-panel">
+                <div class="stat-label">Rate Limit Count</div>
+                <div class="stat-value" id="stat-rate-limit">0 / 100</div>
+                <div class="stat-desc">Requests consumed today</div>
+              </div>
+            </div>
+
+            <!-- Connectors Status -->
+            <div class="panel-section glass-panel">
+              <h3 class="panel-title">Active Connector Status</h3>
+              <div class="table-container">
+                <table class="terminal-table">
+                  <thead>
+                    <tr>
+                      <th>Connector ID</th>
+                      <th>Name</th>
+                      <th>Mode</th>
+                      <th>Status</th>
+                    </tr>
+                  </thead>
+                  <tbody id="connectors-status-table">
+                    <!-- Loaded dynamically -->
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            <!-- Recent Activity -->
+            <div class="panel-section glass-panel">
+              <h3 class="panel-title">Recent Security Events</h3>
+              <div class="log-output" id="recent-logs-console">
+                <!-- Loaded dynamically -->
+              </div>
+            </div>
+          </section>
+
+          <!-- Credentials Vault Tab -->
+          <section id="tab-vault" class="tab-panel hidden">
+            <div class="page-header">
+              <h1>Credentials Vault</h1>
+              <p class="description">Securely configure your broker and exchange API credentials. Data is encrypted using AES-GCM prior to storage.</p>
+            </div>
+
+            <div class="split-layout">
+              <!-- Setup Credentials Form -->
+              <div class="vault-form-panel glass-panel">
+                <h3 class="panel-title">Add / Update Credentials</h3>
+                <form id="vault-form">
+                  <div class="form-group">
+                    <label for="vault-connector">Select Connector</label>
+                    <select id="vault-connector" required>
+                      <option value="mt5">MetaTrader 5 (HTTP/ZeroMQ Bridge)</option>
+                      <option value="bybit">Bybit (REST API)</option>
+                    </select>
+                  </div>
+
+                  <div class="form-group">
+                    <label for="vault-label">Credential Label</label>
+                    <input type="text" id="vault-label" required placeholder="e.g. Exness Live, Bybit Main" />
+                  </div>
+
+                  <!-- Connector Specific Inputs -->
+                  <div id="connector-fields-mt5" class="connector-fields">
+                    <div class="form-group">
+                      <label for="mt5-url">Bridge URL</label>
+                      <input type="url" id="mt5-url" placeholder="http://127.0.0.1:8000 or ngrok/cloudflare tunnel" />
+                    </div>
+                    <div class="form-group">
+                      <label for="mt5-token">Authorization Token (Optional)</label>
+                      <input type="password" id="mt5-token" placeholder="Optional security token" />
+                    </div>
+                  </div>
+
+                  <div id="connector-fields-bybit" class="connector-fields hidden">
+                    <div class="form-group">
+                      <label for="bybit-key">Bybit API Key</label>
+                      <input type="text" id="bybit-key" placeholder="Enter API Key" />
+                    </div>
+                    <div class="form-group">
+                      <label for="bybit-secret">Bybit API Secret</label>
+                      <input type="password" id="bybit-secret" placeholder="Enter API Secret" />
+                    </div>
+                    <div class="form-group checkbox-group">
+                      <input type="checkbox" id="bybit-testnet" />
+                      <label for="bybit-testnet" class="inline-label">Use Bybit Testnet URL</label>
+                    </div>
+                  </div>
+
+                  <button type="submit" class="btn primary">Encrypt & Save to Vault</button>
+                </form>
+                <div id="vault-success" class="success-msg hidden">Credentials successfully saved!</div>
+                <div id="vault-error" class="error-msg hidden"></div>
+              </div>
+
+              <!-- Configured Credentials List -->
+              <div class="vault-list-panel glass-panel">
+                <h3 class="panel-title">Stored Credentials</h3>
+                <div class="credentials-list" id="credentials-list-container">
+                  <!-- Loaded dynamically -->
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <!-- API Keys Tab -->
+          <section id="tab-keys" class="tab-panel hidden">
+            <div class="page-header">
+              <h1>API Keys</h1>
+              <p class="description">Generate and manage API keys for your local coding agents (Cline/Cursor) to connect to the gateway.</p>
+            </div>
+
+            <div class="panel-section glass-panel">
+              <h3 class="panel-title">Generate New API Key</h3>
+              <form id="key-generation-form">
+                <div class="form-inline">
+                  <div class="form-group flex-1">
+                    <input type="text" id="key-label" required placeholder="Label (e.g. Cline Local, Cursor Workstation)" />
+                  </div>
+                  <button type="submit" class="btn primary">Generate Key</button>
+                </div>
+              </form>
+            </div>
+
+            <!-- Existing Keys List -->
+            <div class="panel-section glass-panel">
+              <h3 class="panel-title">Active API Keys</h3>
+              <div class="table-container">
+                <table class="terminal-table">
+                  <thead>
+                    <tr>
+                      <th>Prefix</th>
+                      <th>Label</th>
+                      <th>Created At</th>
+                      <th>Last Used</th>
+                      <th>Action</th>
+                    </tr>
+                  </thead>
+                  <tbody id="api-keys-table-body">
+                    <!-- Loaded dynamically -->
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            <!-- New Key Modal -->
+            <div id="key-modal" class="modal hidden">
+              <div class="modal-content glass-panel">
+                <h3>⚠️ Copy API Key</h3>
+                <p>This key is shown only **once**. Save it securely, as it cannot be recovered.</p>
+                <div class="key-display-box">
+                  <code id="new-key-display"></code>
+                  <button id="btn-copy-key" class="btn small">Copy</button>
+                </div>
+                <button id="btn-close-modal" class="btn secondary">I Have Saved This Key</button>
+              </div>
+            </div>
+          </section>
+
+          <!-- Security Audit Log Tab -->
+          <section id="tab-audit" class="tab-panel hidden">
+            <div class="page-header">
+              <h1>Security Audit Log</h1>
+              <p class="description">Immutable logs of sensitive actions, credential vault creations, and execution mode shifts.</p>
+            </div>
+
+            <div class="panel-section glass-panel">
+              <h3 class="panel-title">System Audit Log</h3>
+              <div class="table-container">
+                <table class="terminal-table">
+                  <thead>
+                    <tr>
+                      <th>Timestamp</th>
+                      <th>Action</th>
+                      <th>Metadata details</th>
+                    </tr>
+                  </thead>
+                  <tbody id="audit-logs-table-body">
+                    <!-- Loaded dynamically -->
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </section>
+
+          <!-- Trading Bot Tab -->
+          <section id="tab-bot" class="tab-panel hidden">
+            <div class="page-header">
+              <h1>Stateful Trading Bot</h1>
+              <p class="description">Manage your Bybit position-takeover presets and monitor the stateful trigger bot sequence (BIAS -> SETUP -> ENTRY).</p>
+            </div>
+
+            <div class="split-layout">
+              <!-- Preset Config Panel -->
+              <div class="vault-form-panel glass-panel">
+                <h3 class="panel-title">Configure Preset</h3>
+                <form id="bot-preset-form">
+                  <div class="form-group">
+                    <label for="preset-symbol">Symbol</label>
+                    <input type="text" id="preset-symbol" required placeholder="e.g. BTCUSDT" />
+                  </div>
+                  <div class="form-group">
+                    <label for="preset-tp-pct">Take Profit Distance (%)</label>
+                    <input type="number" id="preset-tp-pct" step="0.1" required placeholder="e.g. 1.5" />
+                  </div>
+                  <div class="form-group">
+                    <label for="preset-strategy">Exit Strategy</label>
+                    <select id="preset-strategy" required>
+                      <option value="fixed_tp">Fixed Take Profit (On Exchange)</option>
+                      <option value="trailing_stop">Trailing Stop Loss</option>
+                      <option value="contrary_signal">Contrary Signal (Exit on reverse setup)</option>
+                    </select>
+                  </div>
+                  <div class="form-group hidden" id="preset-trailing-container">
+                    <label for="preset-trailing-pct">Trailing Stop Distance (%)</label>
+                    <input type="number" id="preset-trailing-pct" step="0.1" placeholder="e.g. 0.5" />
+                  </div>
+                  <button type="submit" class="btn primary">Save Preset</button>
+                </form>
+                <div id="preset-success" class="success-msg hidden">Preset successfully saved!</div>
+                <div id="preset-error" class="error-msg hidden"></div>
+              </div>
+
+              <!-- State Machine & Active Presets Status Panel -->
+              <div class="vault-list-panel glass-panel">
+                <h3 class="panel-title">Telegram Chat Link</h3>
+                <div class="form-inline" style="margin-bottom:20px; display:flex; gap:10px;">
+                  <div class="form-group flex-1" style="flex:1;">
+                    <input type="text" id="tg-chat-id-input" placeholder="Telegram Chat ID" readonly style="width:100%; background:#111; border:1px solid #333; color:#fff; padding:10px; font-family:var(--font-mono); font-size:13px;" />
+                  </div>
+                  <button id="btn-unlink-tg" class="btn secondary small hidden">Unlink</button>
+                </div>
+                <div id="tg-status-message" style="color:var(--text-muted); font-size:12px; margin-bottom:20px;">
+                  No Telegram chat linked. Start the bot on Telegram and register with your API Key to link.
+                </div>
+
+                <h3 class="panel-title">Symbol States & Takeovers</h3>
+                <div class="table-container">
+                  <table class="terminal-table">
+                    <thead>
+                      <tr>
+                        <th>Symbol</th>
+                        <th>Preset (TP / Strat)</th>
+                        <th>State</th>
+                        <th>Direction</th>
+                        <th>Action</th>
+                      </tr>
+                    </thead>
+                    <tbody id="bot-states-table-body">
+                      <!-- Loaded dynamically -->
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+          </section>
+        </main>
+      </div>
+    </div>
+
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>

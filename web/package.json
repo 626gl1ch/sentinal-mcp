@@ -1,0 +1,18 @@
+{
+  "name": "bastionmcp-dashboard",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "typecheck": "echo no-typecheck-for-js"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.43.5"
+  },
+  "devDependencies": {
+    "vite": "^5.3.1"
+  }
+}
