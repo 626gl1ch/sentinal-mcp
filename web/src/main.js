@@ -1,16 +1,32 @@
 import { createClient } from "@supabase/supabase-js";
 
-// --- Configuration Setup (with dynamic local fallback) ---
+// --- Configuration Setup (with Sentinel-MCP namespace & legacy fallback) ---
 const config = {
-  supabaseUrl: import.meta.env.VITE_SUPABASE_URL || localStorage.getItem("BASTION_SUPABASE_URL") || "",
-  supabaseAnonKey: import.meta.env.VITE_SUPABASE_ANON_KEY || localStorage.getItem("BASTION_SUPABASE_ANON_KEY") || "",
-  gatewayUrl: import.meta.env.VITE_GATEWAY_URL || localStorage.getItem("BASTION_GATEWAY_URL") || "http://localhost:8787"
+  supabaseUrl:
+    import.meta.env.VITE_SUPABASE_URL ||
+    localStorage.getItem("SENTINEL_SUPABASE_URL") ||
+    localStorage.getItem("BASTION_SUPABASE_URL") ||
+    "",
+  supabaseAnonKey:
+    import.meta.env.VITE_SUPABASE_ANON_KEY ||
+    localStorage.getItem("SENTINEL_SUPABASE_ANON_KEY") ||
+    localStorage.getItem("BASTION_SUPABASE_ANON_KEY") ||
+    "",
+  gatewayUrl:
+    import.meta.env.VITE_GATEWAY_URL ||
+    localStorage.getItem("SENTINEL_GATEWAY_URL") ||
+    localStorage.getItem("BASTION_GATEWAY_URL") ||
+    "http://localhost:8787"
 };
 
-// Check if configuration is missing and render a setup bar if needed
+// Initialize Supabase Client
 let supabase = null;
 if (config.supabaseUrl && config.supabaseAnonKey) {
-  supabase = createClient(config.supabaseUrl, config.supabaseAnonKey);
+  try {
+    supabase = createClient(config.supabaseUrl, config.supabaseAnonKey);
+  } catch (e) {
+    console.error("Failed to initialize Supabase client", e);
+  }
 }
 
 // --- DOM References ---
@@ -25,7 +41,10 @@ const authError = document.getElementById("auth-error");
 
 const userDisplayEmail = document.getElementById("user-display-email");
 const userDisplayTier = document.getElementById("user-display-tier");
+const userAvatarInitial = document.getElementById("user-avatar-initial");
+const settingsDisplayEmail = document.getElementById("settings-display-email");
 const btnLogout = document.getElementById("btn-logout");
+const btnLogoutSettings = document.getElementById("btn-logout-settings");
 
 const navItems = document.querySelectorAll(".nav-item");
 const tabPanels = document.querySelectorAll(".tab-panel");
@@ -81,19 +100,119 @@ const btnUnlinkTg = document.getElementById("btn-unlink-tg");
 const tgStatusMessage = document.getElementById("tg-status-message");
 const botStatesTableBody = document.getElementById("bot-states-table-body");
 
+// Settings Tab DOM
+const cfgSbUrl = document.getElementById("cfg-sb-url");
+const cfgSbKey = document.getElementById("cfg-sb-key");
+const cfgGtUrl = document.getElementById("cfg-gt-url");
+const cfgSaveBtn = document.getElementById("cfg-save-btn");
+const cfgSaveMsg = document.getElementById("cfg-save-msg");
+
+// Modal DOM Helpers
+const confirmModal = document.getElementById("confirm-modal");
+const confirmModalTitle = document.getElementById("confirm-modal-title");
+const confirmModalBody = document.getElementById("confirm-modal-body");
+const confirmModalCancel = document.getElementById("confirm-modal-cancel");
+const confirmModalOk = document.getElementById("confirm-modal-ok");
+
+const apiKeyInputModal = document.getElementById("api-key-input-modal");
+const apiKeyPromptInput = document.getElementById("api-key-prompt-input");
+const apiKeyPromptCancel = document.getElementById("api-key-prompt-cancel");
+const apiKeyPromptOk = document.getElementById("api-key-prompt-ok");
+
+const toastContainer = document.getElementById("toast-container");
+
 let currentUser = null;
 let activeUserApiKey = "";
 
-// --- Init & Settings Bar Injection ---
+// --- Toast System ---
+function showToast(title, message, type = "info", duration = 4000) {
+  const toast = document.createElement("div");
+  toast.className = `toast ${type}`;
+
+  const iconMap = {
+    success: "✓",
+    error: "✕",
+    info: "ℹ",
+    warning: "⚠️"
+  };
+
+  toast.innerHTML = `
+    <div class="toast-icon">${iconMap[type] || "ℹ"}</div>
+    <div class="toast-body">
+      <div class="toast-title">${escapeHtml(title)}</div>
+      ${message ? `<div class="toast-message">${escapeHtml(message)}</div>` : ""}
+    </div>
+  `;
+
+  toastContainer.appendChild(toast);
+
+  setTimeout(() => {
+    toast.classList.add("toast-out");
+    toast.addEventListener("animationend", () => toast.remove());
+  }, duration);
+}
+
+// --- Custom Confirm Modal Helper ---
+function customConfirm(title, message, actionText = "Confirm") {
+  return new Promise((resolve) => {
+    confirmModalTitle.textContent = title;
+    confirmModalBody.textContent = message;
+    confirmModalOk.textContent = actionText;
+    confirmModal.classList.remove("hidden");
+
+    const cleanup = () => {
+      confirmModal.classList.add("hidden");
+      confirmModalOk.removeEventListener("click", onOk);
+      confirmModalCancel.removeEventListener("click", onCancel);
+    };
+
+    const onOk = () => { cleanup(); resolve(true); };
+    const onCancel = () => { cleanup(); resolve(false); };
+
+    confirmModalOk.addEventListener("click", onOk);
+    confirmModalCancel.addEventListener("click", onCancel);
+  });
+}
+
+// --- Custom Prompt API Key Modal Helper ---
+function customPromptApiKey() {
+  return new Promise((resolve) => {
+    apiKeyPromptInput.value = "";
+    apiKeyInputModal.classList.remove("hidden");
+    apiKeyPromptInput.focus();
+
+    const cleanup = () => {
+      apiKeyInputModal.classList.add("hidden");
+      apiKeyPromptOk.removeEventListener("click", onOk);
+      apiKeyPromptCancel.removeEventListener("click", onCancel);
+    };
+
+    const onOk = () => {
+      const val = apiKeyPromptInput.value.trim();
+      cleanup();
+      resolve(val || null);
+    };
+    const onCancel = () => { cleanup(); resolve(null); };
+
+    apiKeyPromptOk.addEventListener("click", onOk);
+    apiKeyPromptCancel.addEventListener("click", onCancel);
+  });
+}
+
+// --- Application Init ---
 function init() {
-  injectSettingsPanelIfNeeded();
-  
+  // Populate Settings inputs with current values
+  if (cfgSbUrl) cfgSbUrl.value = config.supabaseUrl;
+  if (cfgSbKey) cfgSbKey.value = config.supabaseAnonKey;
+  if (cfgGtUrl) cfgGtUrl.value = config.gatewayUrl;
+
   if (!supabase) {
     showSetupNotification();
+    setupSettingsListenerOnly();
     return;
   }
 
-  // Setup auth state listener
+  // Auth State Listener
   supabase.auth.onAuthStateChange((event, session) => {
     if (session) {
       currentUser = session.user;
@@ -108,79 +227,28 @@ function init() {
   setupEventListeners();
 }
 
-// Inject a configuration drawer if credentials are not configured yet
-function injectSettingsPanelIfNeeded() {
-  if (document.getElementById("bastion-settings-drawer")) return;
-
-  const drawer = document.createElement("div");
-  drawer.id = "bastion-settings-drawer";
-  drawer.style.cssText = `
-    position: fixed; bottom: 15px; right: 15px; z-index: 1000;
-    padding: 15px; background: rgba(5, 7, 8, 0.95); border: 1px solid var(--border-color);
-    border-radius: 6px; font-family: var(--font-mono); font-size: 11px; width: 280px;
-    box-shadow: 0 4px 20px rgba(0,0,0,0.5); transition: transform 0.3s ease;
-  `;
-
-  const isConfigured = config.supabaseUrl && config.supabaseAnonKey;
-
-  drawer.innerHTML = `
-    <div style="display:flex; justify-content:space-between; margin-bottom:10px; cursor:pointer;" id="settings-title">
-      <span style="font-weight:bold; color:var(--accent-amber)">⚙ CONFIGURATION BINDING</span>
-      <span>${isConfigured ? "[COLLAPSE]" : "[OPEN]"}</span>
-    </div>
-    <div id="settings-body" class="${isConfigured ? "hidden" : ""}">
-      <div style="margin-bottom:8px;">
-        <label style="display:block; color:var(--text-muted); margin-bottom:3px;">SUPABASE URL</label>
-        <input type="text" id="cfg-sb-url" style="width:100%; background:#111; border:1px solid #333; color:#fff; padding:4px;" value="${config.supabaseUrl}">
-      </div>
-      <div style="margin-bottom:8px;">
-        <label style="display:block; color:var(--text-muted); margin-bottom:3px;">SUPABASE ANON KEY</label>
-        <input type="password" id="cfg-sb-key" style="width:100%; background:#111; border:1px solid #333; color:#fff; padding:4px;" value="${config.supabaseAnonKey}">
-      </div>
-      <div style="margin-bottom:10px;">
-        <label style="display:block; color:var(--text-muted); margin-bottom:3px;">GATEWAY WORKER URL</label>
-        <input type="text" id="cfg-gt-url" style="width:100%; background:#111; border:1px solid #333; color:#fff; padding:4px;" value="${config.gatewayUrl}">
-      </div>
-      <button id="cfg-save" style="background:var(--accent-green); color:#000; border:none; padding:5px 10px; width:100%; cursor:pointer; font-weight:bold;">SAVE SETTINGS</button>
-    </div>
-  `;
-
-  document.body.appendChild(drawer);
-
-  const title = document.getElementById("settings-title");
-  const body = document.getElementById("settings-body");
-  title.addEventListener("click", () => {
-    body.classList.toggle("hidden");
-    title.querySelector("span:last-child").textContent = body.classList.contains("hidden") ? "[OPEN]" : "[COLLAPSE]";
-  });
-
-  document.getElementById("cfg-save").addEventListener("click", () => {
-    const url = document.getElementById("cfg-sb-url").value.trim();
-    const key = document.getElementById("cfg-sb-key").value.trim();
-    const gt = document.getElementById("cfg-gt-url").value.trim();
-    
-    if (url) localStorage.setItem("BASTION_SUPABASE_URL", url);
-    if (key) localStorage.setItem("BASTION_SUPABASE_ANON_KEY", key);
-    if (gt) localStorage.setItem("BASTION_GATEWAY_URL", gt);
-
-    window.location.reload();
-  });
+function setupSettingsListenerOnly() {
+  if (cfgSaveBtn) {
+    cfgSaveBtn.addEventListener("click", handleSaveSettings);
+  }
 }
 
 function showSetupNotification() {
   authScreen.classList.remove("hidden");
+  dashboardLayout.classList.add("hidden");
   authError.classList.remove("hidden");
-  authError.textContent = "Please configure your Supabase URL & Anon Key in the CONFIGURATION BINDING panel below to start.";
+  authError.innerHTML = "<strong>Setup Required:</strong> Please configure your Supabase URL & Anon Key in the Settings tab or localStorage.";
 }
 
-// --- Event Handlers & Core Logic ---
+// --- Event Listeners ---
 function setupEventListeners() {
-  // Auth Form Handlers
-  btnLogin.addEventListener("click", handleLogin);
+  // Auth
+  authForm.addEventListener("submit", handleLogin);
   btnSignup.addEventListener("click", handleSignup);
   btnLogout.addEventListener("click", handleLogout);
+  if (btnLogoutSettings) btnLogoutSettings.addEventListener("click", handleLogout);
 
-  // Tab switching
+  // Navigation Tab Switching
   navItems.forEach(item => {
     item.addEventListener("click", () => {
       navItems.forEach(nav => nav.classList.remove("active"));
@@ -188,11 +256,16 @@ function setupEventListeners() {
 
       item.classList.add("active");
       const tabId = item.getAttribute("data-tab");
-      document.getElementById(tabId).classList.remove("hidden");
+      const targetPanel = document.getElementById(tabId);
+      if (targetPanel) {
+        targetPanel.classList.remove("hidden");
+        targetPanel.classList.add("entering");
+        setTimeout(() => targetPanel.classList.remove("entering"), 200);
+      }
     });
   });
 
-  // Vault Form Connector toggle
+  // Vault form fields toggle
   vaultConnector.addEventListener("change", (e) => {
     if (e.target.value === "mt5") {
       connectorFieldsMt5.classList.remove("hidden");
@@ -203,13 +276,11 @@ function setupEventListeners() {
     }
   });
 
-  // Vault credentials submission
+  // Forms
   vaultForm.addEventListener("submit", handleVaultSubmission);
-
-  // API Key generation
   keyGenerationForm.addEventListener("submit", handleApiKeyGeneration);
 
-  // Trading Bot Strategy toggle
+  // Trading bot strategy toggle
   presetStrategy.addEventListener("change", (e) => {
     if (e.target.value === "trailing_stop") {
       presetTrailingContainer.classList.remove("hidden");
@@ -218,30 +289,38 @@ function setupEventListeners() {
     }
   });
 
-  // Trading Bot Preset submission
   botPresetForm.addEventListener("submit", handlePresetSubmission);
+  if (btnUnlinkTg) btnUnlinkTg.addEventListener("click", handleUnlinkTelegram);
 
-  // Telegram Unlinking
-  btnUnlinkTg.addEventListener("click", handleUnlinkTelegram);
+  // Settings save
+  if (cfgSaveBtn) cfgSaveBtn.addEventListener("click", handleSaveSettings);
 
-  // Close modals
+  // Key Modal Close & Copy
   btnCloseModal.addEventListener("click", () => keyModal.classList.add("hidden"));
   btnCopyKey.addEventListener("click", copyKeyToClipboard);
 }
 
-// --- Auth Actions ---
+// --- Auth Operations ---
 async function handleLogin(e) {
   e.preventDefault();
   authError.classList.add("hidden");
+  btnLogin.disabled = true;
+  btnLogin.textContent = "Authenticating…";
+
   const email = authEmail.value.trim();
   const password = authPassword.value;
 
   try {
     const { error } = await supabase.auth.signInWithPassword({ email, password });
     if (error) throw error;
+    showToast("Signed In", `Welcome back, ${email}`, "success");
   } catch (err) {
     authError.classList.remove("hidden");
-    authError.textContent = `Login Error: ${err.message}`;
+    authError.textContent = `Authentication failed: ${err.message}`;
+    showToast("Auth Error", err.message, "error");
+  } finally {
+    btnLogin.disabled = false;
+    btnLogin.textContent = "Sign In";
   }
 }
 
@@ -251,30 +330,40 @@ async function handleSignup(e) {
   const email = authEmail.value.trim();
   const password = authPassword.value;
 
+  if (!email || !password) {
+    authError.classList.remove("hidden");
+    authError.textContent = "Please provide both email and password.";
+    return;
+  }
+
   try {
     const { error } = await supabase.auth.signUp({
       email,
       password,
-      options: {
-        data: { display_name: email.split("@")[0] }
-      }
+      options: { data: { display_name: email.split("@")[0] } }
     });
     if (error) throw error;
     authError.classList.remove("hidden");
     authError.className = "success-msg";
-    authError.textContent = "Registration successful! Please check your email for confirmation, or log in if auto-confirmed.";
+    authError.textContent = "Registration successful! Please check your email for confirmation, or log in.";
+    showToast("Registration Complete", "Please check your inbox to confirm.", "info");
   } catch (err) {
     authError.classList.remove("hidden");
     authError.className = "error-msg";
     authError.textContent = `Registration Error: ${err.message}`;
+    showToast("Registration Failed", err.message, "error");
   }
 }
 
 async function handleLogout() {
-  await supabase.auth.signOut();
+  const confirmed = await customConfirm("Sign Out", "Are you sure you want to sign out of Sentinal-MCP?", "Sign Out");
+  if (confirmed) {
+    await supabase.auth.signOut();
+    showToast("Signed Out", "You have been logged out safely.", "info");
+  }
 }
 
-// --- UI Navigation Toggles ---
+// --- UI Navigation Operations ---
 function showAuth() {
   authScreen.classList.remove("hidden");
   dashboardLayout.classList.add("hidden");
@@ -283,18 +372,30 @@ function showAuth() {
 async function showDashboard() {
   authScreen.classList.add("hidden");
   dashboardLayout.classList.remove("hidden");
-  userDisplayEmail.textContent = currentUser.email;
 
-  // Load User Data
-  await loadSubscriptionInfo();
-  await loadApiKeys(); // Load API Keys first so we can authenticate Gateway uploads
-  await loadVaultCredentials();
-  await loadAuditAndUsageLogs();
+  // Set user display details
+  userDisplayEmail.textContent = currentUser.email;
+  if (settingsDisplayEmail) settingsDisplayEmail.textContent = currentUser.email;
+  if (userAvatarInitial) userAvatarInitial.textContent = currentUser.email.charAt(0).toUpperCase();
+
+  // Load active connector indicators immediately
   loadConnectorStatuses();
-  await loadBotSettingsAndStates();
+
+  // Load all dashboard components IN PARALLEL via Promise.all for zero-lag response
+  try {
+    await Promise.all([
+      loadSubscriptionInfo(),
+      loadApiKeys(),
+      loadVaultCredentials(),
+      loadAuditAndUsageLogs(),
+      loadBotSettingsAndStates()
+    ]);
+  } catch (err) {
+    console.error("Dashboard parallel load partial error:", err);
+  }
 }
 
-// --- Data Loading Operations ---
+// --- Parallel Data Loading Operations ---
 
 async function loadSubscriptionInfo() {
   try {
@@ -305,9 +406,9 @@ async function loadSubscriptionInfo() {
 
     if (error) throw error;
     if (data && data.length > 0) {
-      userDisplayTier.textContent = `Tier: ${data[0].tier.toUpperCase()} (${data[0].status})`;
+      userDisplayTier.textContent = `${data[0].tier.toUpperCase()} (${data[0].status.toUpperCase()})`;
     } else {
-      userDisplayTier.textContent = "Tier: FREE (No Subscription)";
+      userDisplayTier.textContent = "FREE PLAN";
     }
   } catch (err) {
     console.error("Failed to load subscription info", err);
@@ -325,15 +426,12 @@ async function loadApiKeys() {
 
     if (error) throw error;
 
-    // Save the first active API key for our Gateway upload requests
     if (keys && keys.length > 0) {
-      // In a real environment, we would prompt the user to input their API key,
-      // but for dashboard comfort, we can use their Supabase session token or
-      // look for a saved session API key in local storage. To bypass, we can
-      // fetch using the Supabase client directly, but vault encryption happens
-      // on the Gateway. So we need the actual raw API Key to hit `/credentials`.
-      // We store keys in localStorage when they are created, so we can fetch it if saved!
-      const savedKey = localStorage.getItem(`bastion_raw_key_${keys[0].key_prefix}`);
+      // Check for locally cached raw key (checking both sentinel and legacy bastion namespaces)
+      const prefix = keys[0].key_prefix;
+      const savedKey =
+        localStorage.getItem(`sentinel_raw_key_${prefix}`) ||
+        localStorage.getItem(`bastion_raw_key_${prefix}`);
       if (savedKey) {
         activeUserApiKey = savedKey;
       }
@@ -341,10 +439,9 @@ async function loadApiKeys() {
 
     statApiKeys.textContent = keys ? keys.length.toString() : "0";
 
-    // Populate API keys table
     apiKeysTableBody.innerHTML = "";
     if (!keys || keys.length === 0) {
-      apiKeysTableBody.innerHTML = `<tr><td colspan="5" style="text-align:center; color:var(--text-muted)">No active API keys found. Generate one to connect clients.</td></tr>`;
+      apiKeysTableBody.innerHTML = `<tr><td colspan="5" style="text-align:center; color:var(--text-muted); padding:16px;">No active API keys found. Generate one to connect clients.</td></tr>`;
       return;
     }
 
@@ -352,19 +449,20 @@ async function loadApiKeys() {
       const row = document.createElement("tr");
       row.innerHTML = `
         <td><code>${key.key_prefix}...</code></td>
-        <td>${escapeHtml(key.label)}</td>
-        <td>${new Date(key.created_at).toLocaleString()}</td>
-        <td>${key.last_used_at ? new Date(key.last_used_at).toLocaleString() : "Never"}</td>
-        <td><button class="btn secondary small btn-revoke-key" data-id="${key.id}">Revoke</button></td>
+        <td><strong>${escapeHtml(key.label)}</strong></td>
+        <td>${new Date(key.created_at).toLocaleDateString()} ${new Date(key.created_at).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</td>
+        <td>${key.last_used_at ? new Date(key.last_used_at).toLocaleDateString() : "Never"}</td>
+        <td><button class="btn danger small btn-revoke-key" data-id="${key.id}">Revoke</button></td>
       `;
       apiKeysTableBody.appendChild(row);
     });
 
-    // Revoke key handlers
+    // Revoke Handlers
     document.querySelectorAll(".btn-revoke-key").forEach(btn => {
       btn.addEventListener("click", async (e) => {
-        const keyId = e.target.getAttribute("data-id");
-        if (confirm("Are you sure you want to revoke this API key? This action is irreversible.")) {
+        const keyId = e.currentTarget.getAttribute("data-id");
+        const confirmed = await customConfirm("Revoke API Key", "Are you sure you want to revoke this API key? This action cannot be undone.", "Revoke Key");
+        if (confirmed) {
           await revokeApiKey(keyId);
         }
       });
@@ -388,7 +486,7 @@ async function loadVaultCredentials() {
 
     credentialsListContainer.innerHTML = "";
     if (!creds || creds.length === 0) {
-      credentialsListContainer.innerHTML = `<div style="text-align:center; color:var(--text-muted); padding:20px;">No credentials saved in vault.</div>`;
+      credentialsListContainer.innerHTML = `<div style="text-align:center; color:var(--text-muted); padding:24px;">No credentials saved in vault.</div>`;
       return;
     }
 
@@ -400,15 +498,16 @@ async function loadVaultCredentials() {
           <span class="cred-label">${escapeHtml(cred.label)}</span>
           <span class="cred-meta">${cred.connector_id.toUpperCase()} • Configured ${new Date(cred.created_at).toLocaleDateString()}</span>
         </div>
-        <button class="btn secondary small btn-delete-cred" data-id="${cred.id}">Delete</button>
+        <button class="btn danger small btn-delete-cred" data-id="${cred.id}">Delete</button>
       `;
       credentialsListContainer.appendChild(card);
     });
 
     document.querySelectorAll(".btn-delete-cred").forEach(btn => {
       btn.addEventListener("click", async (e) => {
-        const id = e.target.getAttribute("data-id");
-        if (confirm("Delete these credentials from the vault? Connectors using this account will stop working.")) {
+        const id = e.currentTarget.getAttribute("data-id");
+        const confirmed = await customConfirm("Delete Credential", "Delete these credentials from the vault? Connectors using this account will stop working.", "Delete");
+        if (confirmed) {
           await deleteCredentials(id);
         }
       });
@@ -420,17 +519,24 @@ async function loadVaultCredentials() {
 
 async function loadAuditAndUsageLogs() {
   try {
-    // 1. Fetch Audit Logs
-    const { data: audits, error: auditErr } = await supabase
-      .from("audit_log")
-      .select("created_at, action, metadata")
-      .eq("user_id", currentUser.id)
-      .order("created_at", { ascending: false })
-      .limit(30);
+    const [auditRes, usageRes] = await Promise.all([
+      supabase
+        .from("audit_log")
+        .select("created_at, action, metadata")
+        .eq("user_id", currentUser.id)
+        .order("created_at", { ascending: false })
+        .limit(30),
+      supabase
+        .from("usage_logs")
+        .select("*", { count: "exact", head: true })
+        .eq("user_id", currentUser.id)
+        .gte("created_at", new Date(new Date().setHours(0,0,0,0)).toISOString())
+    ]);
 
-    if (auditErr) throw auditErr;
+    if (auditRes.error) throw auditRes.error;
+    const audits = auditRes.data;
 
-    // Populate console logger
+    // Recent console output
     recentLogsConsole.innerHTML = "";
     if (!audits || audits.length === 0) {
       recentLogsConsole.innerHTML = `<div class="log-line"><span style="color:var(--text-muted)">No recent system events.</span></div>`;
@@ -447,10 +553,10 @@ async function loadAuditAndUsageLogs() {
       });
     }
 
-    // Populate complete Audit Logs table
+    // Security Audit table
     auditLogsTableBody.innerHTML = "";
     if (!audits || audits.length === 0) {
-      auditLogsTableBody.innerHTML = `<tr><td colspan="3" style="text-align:center; color:var(--text-muted)">No audit trail recorded yet.</td></tr>`;
+      auditLogsTableBody.innerHTML = `<tr><td colspan="3" style="text-align:center; color:var(--text-muted); padding:16px;">No audit trail recorded yet.</td></tr>`;
     } else {
       audits.forEach(log => {
         const row = document.createElement("tr");
@@ -463,19 +569,9 @@ async function loadAuditAndUsageLogs() {
       });
     }
 
-    // 2. Fetch Usage Logs (to compute rate limit usage)
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    
-    const { count, error: usageErr } = await supabase
-      .from("usage_logs")
-      .select("*", { count: "exact", head: true })
-      .eq("user_id", currentUser.id)
-      .gte("created_at", today.toISOString());
-
-    if (usageErr) throw usageErr;
-    
-    statRateLimit.textContent = `${count || 0} / 10000`; // Dynamic limits depending on tier
+    // Rate Limit display
+    const requestCount = usageRes.count || 0;
+    statRateLimit.textContent = `${requestCount} / 10,000`;
   } catch (err) {
     console.error("Failed to load system logs", err);
   }
@@ -485,39 +581,32 @@ function loadConnectorStatuses() {
   connectorsStatusTable.innerHTML = `
     <tr>
       <td><code>mt5</code></td>
-      <td>MetaTrader 5</td>
-      <td>Read-Only</td>
+      <td><strong>MetaTrader 5 Bridge</strong></td>
+      <td>Read-Only Gateway</td>
       <td><span class="badge active">ACTIVE</span></td>
     </tr>
     <tr>
       <td><code>bybit</code></td>
-      <td>Bybit Perpetual</td>
-      <td>Read-Only</td>
+      <td><strong>Bybit Perpetual</strong></td>
+      <td>Stateful Management</td>
       <td><span class="badge active">ACTIVE</span></td>
     </tr>
   `;
 }
 
-// --- Credentials Actions ---
+// --- Credential Vault Operations ---
 
 async function handleVaultSubmission(e) {
   e.preventDefault();
   vaultSuccess.classList.add("hidden");
   vaultErrorMsg.classList.add("hidden");
 
-  // Determine active API Key for Gateway Authentication
   if (!activeUserApiKey) {
-    // If no raw key is saved, try to use a sandbox fallback key or generate one
-    const { data: keys } = await supabase.from("api_keys").select("key_prefix").eq("user_id", currentUser.id).eq("revoked", false);
-    if (!keys || keys.length === 0) {
-      vaultErrorMsg.classList.remove("hidden");
-      vaultErrorMsg.textContent = "Please generate an API Key first on the API Keys tab. An API key is required to authorize vault encryption uploads to the Gateway.";
+    const inputKey = await customPromptApiKey();
+    if (!inputKey) {
+      showToast("Authorization Required", "An API Key is required to encrypt and upload credentials.", "warning");
       return;
     }
-    
-    // Prompt the user to supply their key
-    const inputKey = prompt("Please enter one of your active API keys to authorize this credential vault upload to the Gateway:");
-    if (!inputKey) return;
     activeUserApiKey = inputKey;
   }
 
@@ -553,10 +642,7 @@ async function handleVaultSubmission(e) {
         "Authorization": `Bearer ${activeUserApiKey}`,
         "Content-Type": "application/json"
       },
-      body: JSON.stringify({
-        label,
-        credentials: credentialsObj
-      })
+      body: JSON.stringify({ label, credentials: credentialsObj })
     });
 
     if (!res.ok) {
@@ -568,13 +654,14 @@ async function handleVaultSubmission(e) {
     if (data.success) {
       vaultSuccess.classList.remove("hidden");
       vaultForm.reset();
-      await loadVaultCredentials();
-      await loadAuditAndUsageLogs();
+      showToast("Vault Updated", "Credentials encrypted and saved securely.", "success");
+      await Promise.all([loadVaultCredentials(), loadAuditAndUsageLogs()]);
     } else {
       throw new Error(data.error || "Gateway rejected credentials upload");
     }
   } catch (err) {
     showVaultError(err.message);
+    showToast("Upload Failed", err.message, "error");
   }
 }
 
@@ -590,76 +677,65 @@ async function deleteCredentials(id) {
       .delete()
       .eq("id", id);
     if (error) throw error;
-    
-    // Log deletion to audit log
+
     await supabase.from("audit_log").insert({
       user_id: currentUser.id,
       action: "credential_deleted",
       metadata: { credential_id: id }
     });
 
-    await loadVaultCredentials();
-    await loadAuditAndUsageLogs();
+    showToast("Deleted", "Credentials removed from vault.", "info");
+    await Promise.all([loadVaultCredentials(), loadAuditAndUsageLogs()]);
   } catch (err) {
-    alert(`Failed to delete credentials: ${err.message}`);
+    showToast("Delete Error", err.message, "error");
   }
 }
 
-// --- API Key Actions ---
+// --- API Key Operations ---
 
 async function handleApiKeyGeneration(e) {
   e.preventDefault();
   const label = keyLabel.value.trim();
 
-  // 1. Generate local cryptographically secure random key
-  const prefix = "bm_"; // BastionMCP prefix
+  // Generate cryptographically secure random key with new Sentinal-MCP prefix "smc_"
+  const prefix = "smc_";
   const randBytes = crypto.getRandomValues(new Uint8Array(20));
-  const hexKey = Array.from(randBytes)
-    .map(b => b.toString(16).padStart(2, "0"))
-    .join("");
+  const hexKey = Array.from(randBytes).map(b => b.toString(16).padStart(2, "0")).join("");
   const rawKey = prefix + hexKey;
 
-  // 2. Hash key with SHA-256
+  // SHA-256 Digest
   const hashBuffer = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(rawKey));
-  const keyHash = Array.from(new Uint8Array(hashBuffer))
-    .map(b => b.toString(16).padStart(2, "0"))
-    .join("");
-
+  const keyHash = Array.from(new Uint8Array(hashBuffer)).map(b => b.toString(16).padStart(2, "0")).join("");
   const keyPrefix = rawKey.substring(0, 8);
 
   try {
-    // 3. Write hash and metadata to Supabase api_keys table
-    const { error } = await supabase
-      .from("api_keys")
-      .insert({
-        user_id: currentUser.id,
-        key_hash: keyHash,
-        key_prefix: keyPrefix,
-        label: label
-      });
+    const { error } = await supabase.from("api_keys").insert({
+      user_id: currentUser.id,
+      key_hash: keyHash,
+      key_prefix: keyPrefix,
+      label: label
+    });
 
     if (error) throw error;
 
-    // Log action to audit log
     await supabase.from("audit_log").insert({
       user_id: currentUser.id,
       action: "api_key_generated",
       metadata: { label, prefix: keyPrefix }
     });
 
-    // Save key in localStorage so the user can easily manage credentials from their own dashboard
-    localStorage.setItem(`bastion_raw_key_${keyPrefix}`, rawKey);
+    // Save in localStorage under new sentinel namespace
+    localStorage.setItem(`sentinel_raw_key_${keyPrefix}`, rawKey);
     activeUserApiKey = rawKey;
 
-    // 4. Show modal with rawKey
     newKeyDisplay.textContent = rawKey;
     keyModal.classList.remove("hidden");
     keyGenerationForm.reset();
 
-    await loadApiKeys();
-    await loadAuditAndUsageLogs();
+    showToast("API Key Generated", "Copy your key before closing the modal.", "success");
+    await Promise.all([loadApiKeys(), loadAuditAndUsageLogs()]);
   } catch (err) {
-    alert(`Key generation failed: ${err.message}`);
+    showToast("Generation Error", err.message, "error");
   }
 }
 
@@ -669,75 +745,59 @@ async function revokeApiKey(id) {
       .from("api_keys")
       .update({ revoked: true })
       .eq("id", id);
-    
+
     if (error) throw error;
 
-    // Log action to audit log
     await supabase.from("audit_log").insert({
       user_id: currentUser.id,
       action: "api_key_revoked",
       metadata: { key_id: id }
     });
 
-    await loadApiKeys();
-    await loadAuditAndUsageLogs();
+    showToast("Key Revoked", "API Key deactivated successfully.", "info");
+    await Promise.all([loadApiKeys(), loadAuditAndUsageLogs()]);
   } catch (err) {
-    alert(`Failed to revoke key: ${err.message}`);
+    showToast("Revoke Error", err.message, "error");
   }
 }
 
 function copyKeyToClipboard() {
   navigator.clipboard.writeText(newKeyDisplay.textContent);
   btnCopyKey.textContent = "Copied!";
-  setTimeout(() => btnCopyKey.textContent = "Copy", 1500);
+  showToast("Copied to Clipboard", "API Key copied safely.", "info");
+  setTimeout(() => btnCopyKey.textContent = "Copy", 1800);
 }
 
 // --- Trading Bot Operations ---
 
 async function loadBotSettingsAndStates() {
   try {
-    // 1. Fetch Telegram chat status
-    const { data: tgSettings, error: tgErr } = await supabase
-      .from("telegram_settings")
-      .select("telegram_chat_id")
-      .eq("user_id", currentUser.id);
+    const [tgRes, presetRes, stateRes] = await Promise.all([
+      supabase.from("telegram_settings").select("telegram_chat_id").eq("user_id", currentUser.id),
+      supabase.from("trading_presets").select("symbol, tp_distance_pct, exit_strategy, trailing_stop_pct").eq("user_id", currentUser.id),
+      supabase.from("trading_states").select("symbol, state, bias_direction, position_taken_over").eq("user_id", currentUser.id)
+    ]);
 
-    if (tgErr) throw tgErr;
-
-    if (tgSettings && tgSettings.length > 0) {
-      tgChatIdInput.value = tgSettings[0].telegram_chat_id;
-      btnUnlinkTg.classList.remove("hidden");
-      tgStatusMessage.innerHTML = `<span style="color:var(--accent-green); font-weight:bold;">● LINKED</span> to Telegram chat ID: <code>${tgSettings[0].telegram_chat_id}</code>`;
+    // 1. Telegram settings
+    if (tgRes.data && tgRes.data.length > 0) {
+      tgChatIdInput.value = tgRes.data[0].telegram_chat_id;
+      if (btnUnlinkTg) btnUnlinkTg.classList.remove("hidden");
+      tgStatusMessage.className = "tg-status-box linked";
+      tgStatusMessage.innerHTML = `✓ <strong>LINKED</strong> to Telegram Chat ID: <code>${tgRes.data[0].telegram_chat_id}</code>`;
     } else {
       tgChatIdInput.value = "";
-      btnUnlinkTg.classList.add("hidden");
+      if (btnUnlinkTg) btnUnlinkTg.classList.add("hidden");
+      tgStatusMessage.className = "tg-status-box";
       tgStatusMessage.innerHTML = `No Telegram chat linked. Start the bot on Telegram and register with your API Key to link.`;
     }
 
-    // 2. Fetch Presets and States
-    const { data: presets, error: presetErr } = await supabase
-      .from("trading_presets")
-      .select("symbol, tp_distance_pct, exit_strategy, trailing_stop_pct")
-      .eq("user_id", currentUser.id);
-
-    if (presetErr) throw presetErr;
-
-    const { data: states, error: stateErr } = await supabase
-      .from("trading_states")
-      .select("symbol, state, bias_direction, position_taken_over")
-      .eq("user_id", currentUser.id);
-
-    if (stateErr) throw stateErr;
-
-    // Combine them by symbol
+    // 2. Map presets and state machines
     const symbolMap = new Map();
-    if (presets) {
-      presets.forEach(p => {
-        symbolMap.set(p.symbol.toUpperCase(), { preset: p, state: null });
-      });
+    if (presetRes.data) {
+      presetRes.data.forEach(p => symbolMap.set(p.symbol.toUpperCase(), { preset: p, state: null }));
     }
-    if (states) {
-      states.forEach(s => {
+    if (stateRes.data) {
+      stateRes.data.forEach(s => {
         const sym = s.symbol.toUpperCase();
         if (symbolMap.has(sym)) {
           symbolMap.get(sym).state = s;
@@ -749,7 +809,7 @@ async function loadBotSettingsAndStates() {
 
     botStatesTableBody.innerHTML = "";
     if (symbolMap.size === 0) {
-      botStatesTableBody.innerHTML = `<tr><td colspan="5" style="text-align:center; color:var(--text-muted); padding:12px;">No active presets or state machine symbols.</td></tr>`;
+      botStatesTableBody.innerHTML = `<tr><td colspan="5" style="text-align:center; color:var(--text-muted); padding:16px;">No active presets or state machine symbols.</td></tr>`;
       return;
     }
 
@@ -760,48 +820,41 @@ async function loadBotSettingsAndStates() {
         ? `<code>${val.preset.tp_distance_pct}%</code> / <code>${val.preset.exit_strategy.toUpperCase()}</code>`
         : `<span style="color:var(--text-muted);">None</span>`;
 
-      const stateText = val.state
-        ? `<code>${val.state.state}</code>`
-        : `<code>IDLE</code>`;
+      const stateText = val.state ? `<code>${val.state.state}</code>` : `<code>IDLE</code>`;
 
-      const dirText = val.state
-        ? `<span style="font-weight:bold; color:${val.state.bias_direction === "LONG" ? "var(--accent-green)" : val.state.bias_direction === "SHORT" ? "var(--text-error)" : "var(--text-muted)"}">${val.state.bias_direction}</span>`
-        : `<span>NONE</span>`;
+      const dirClass = val.state?.bias_direction === "LONG" ? "long" : val.state?.bias_direction === "SHORT" ? "short" : "inactive";
+      const dirText = val.state?.bias_direction ? `<span class="badge ${dirClass}">${val.state.bias_direction}</span>` : `<span class="badge inactive">NONE</span>`;
 
       row.innerHTML = `
-        <td><b>${sym}</b></td>
+        <td><strong>${sym}</strong></td>
         <td>${presetText}</td>
         <td>${stateText}</td>
         <td>${dirText}</td>
         <td>
-          <div style="display:flex; gap:5px;">
+          <div style="display:flex; gap:6px;">
             ${val.state && val.state.state !== "IDLE" ? `<button class="btn secondary small btn-reset-bot" data-symbol="${sym}">Reset State</button>` : ""}
-            ${val.preset ? `<button class="btn secondary small btn-delete-preset" data-symbol="${sym}" style="color:var(--text-error); border-color:rgba(248,81,73,0.15)">Delete Preset</button>` : ""}
+            ${val.preset ? `<button class="btn danger small btn-delete-preset" data-symbol="${sym}">Delete</button>` : ""}
           </div>
         </td>
       `;
       botStatesTableBody.appendChild(row);
     });
 
-    // Add button event listeners
     document.querySelectorAll(".btn-reset-bot").forEach(btn => {
       btn.addEventListener("click", async (e) => {
         const sym = e.currentTarget.getAttribute("data-symbol");
-        if (confirm(`Reset state machine for ${sym} to IDLE?`)) {
-          await resetBotState(sym);
-        }
+        const confirmed = await customConfirm("Reset Bot State", `Reset state machine for ${sym} to IDLE?`, "Reset");
+        if (confirmed) await resetBotState(sym);
       });
     });
 
     document.querySelectorAll(".btn-delete-preset").forEach(btn => {
       btn.addEventListener("click", async (e) => {
         const sym = e.currentTarget.getAttribute("data-symbol");
-        if (confirm(`Delete preset for ${sym}?`)) {
-          await deletePreset(sym);
-        }
+        const confirmed = await customConfirm("Delete Preset", `Delete trading preset for ${sym}?`, "Delete");
+        if (confirmed) await deletePreset(sym);
       });
     });
-
   } catch (err) {
     console.error("Failed to load trading bot settings/states", err);
   }
@@ -822,9 +875,10 @@ async function resetBotState(symbol) {
       .eq("symbol", symbol.toUpperCase());
 
     if (error) throw error;
+    showToast("State Reset", `${symbol} state reset to IDLE.`, "info");
     await loadBotSettingsAndStates();
   } catch (err) {
-    alert(`Failed to reset bot state: ${err.message}`);
+    showToast("Reset Failed", err.message, "error");
   }
 }
 
@@ -837,14 +891,16 @@ async function deletePreset(symbol) {
       .eq("symbol", symbol.toUpperCase());
 
     if (error) throw error;
+    showToast("Preset Removed", `Preset for ${symbol} deleted.`, "info");
     await loadBotSettingsAndStates();
   } catch (err) {
-    alert(`Failed to delete preset: ${err.message}`);
+    showToast("Delete Failed", err.message, "error");
   }
 }
 
 async function handleUnlinkTelegram() {
-  if (confirm("Are you sure you want to unlink your Telegram account? You will stop receiving notifications and commands.")) {
+  const confirmed = await customConfirm("Unlink Telegram", "Unlink your Telegram account? You will stop receiving signals and alerts.", "Unlink");
+  if (confirmed) {
     try {
       const { error } = await supabase
         .from("telegram_settings")
@@ -852,9 +908,10 @@ async function handleUnlinkTelegram() {
         .eq("user_id", currentUser.id);
 
       if (error) throw error;
+      showToast("Unlinked", "Telegram integration removed.", "info");
       await loadBotSettingsAndStates();
     } catch (err) {
-      alert(`Failed to unlink Telegram: ${err.message}`);
+      showToast("Unlink Error", err.message, "error");
     }
   }
 }
@@ -892,14 +949,40 @@ async function handlePresetSubmission(e) {
     presetSuccess.classList.remove("hidden");
     botPresetForm.reset();
     presetTrailingContainer.classList.add("hidden");
+    showToast("Preset Saved", `Preset for ${symbol} configured successfully.`, "success");
     await loadBotSettingsAndStates();
   } catch (err) {
     presetError.classList.remove("hidden");
     presetError.textContent = `Save failed: ${err.message}`;
+    showToast("Save Error", err.message, "error");
   }
 }
 
-// --- Utils ---
+// --- Settings Handler ---
+function handleSaveSettings() {
+  const url = cfgSbUrl.value.trim();
+  const key = cfgSbKey.value.trim();
+  const gt = cfgGtUrl.value.trim();
+
+  if (url) {
+    localStorage.setItem("SENTINEL_SUPABASE_URL", url);
+    localStorage.setItem("BASTION_SUPABASE_URL", url);
+  }
+  if (key) {
+    localStorage.setItem("SENTINEL_SUPABASE_ANON_KEY", key);
+    localStorage.setItem("BASTION_SUPABASE_ANON_KEY", key);
+  }
+  if (gt) {
+    localStorage.setItem("SENTINEL_GATEWAY_URL", gt);
+    localStorage.setItem("BASTION_GATEWAY_URL", gt);
+  }
+
+  if (cfgSaveMsg) cfgSaveMsg.classList.remove("hidden");
+  showToast("Settings Saved", "Reloading application to establish new connection…", "success");
+  setTimeout(() => window.location.reload(), 1200);
+}
+
+// --- Utility Functions ---
 function escapeHtml(text) {
   if (typeof text !== "string") return JSON.stringify(text);
   return text
@@ -910,5 +993,5 @@ function escapeHtml(text) {
     .replace(/'/g, "&#039;");
 }
 
-// Initialize on DOM load
+// Initialize on DOM Ready
 document.addEventListener("DOMContentLoaded", init);
