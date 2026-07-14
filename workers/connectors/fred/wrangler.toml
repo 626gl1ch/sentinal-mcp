@@ -1,4 +1,4 @@
-name = "bastionmcp-connector-fred"
+name = "sentinal-mcp-connector-fred"
 main = "src/index.ts"
 compatibility_date = "2026-07-01"
 

@@ -1,5 +1,5 @@
 {
-  "name": "bastionmcp-connector-fred",
+  "name": "sentinal-mcp-connector-fred",
   "version": "1.0.0",
   "private": true,
   "scripts": {

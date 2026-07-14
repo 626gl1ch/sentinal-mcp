@@ -1,5 +1,5 @@
 {
-  "name": "bastionmcp-connector-mt5",
+  "name": "sentinal-mcp-connector-mt5",
   "version": "1.0.0",
   "private": true,
   "scripts": {

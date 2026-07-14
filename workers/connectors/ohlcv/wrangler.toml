@@ -1,4 +1,4 @@
-name = "bastionmcp-connector-ohlcv"
+name = "sentinal-mcp-connector-ohlcv"
 main = "src/index.ts"
 compatibility_date = "2026-07-01"
 

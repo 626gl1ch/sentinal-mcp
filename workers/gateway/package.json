@@ -1,5 +1,5 @@
 {
-  "name": "bastionmcp-gateway",
+  "name": "sentinal-mcp-gateway",
   "version": "1.0.0",
   "private": true,
   "scripts": {

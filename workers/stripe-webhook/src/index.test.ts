@@ -98,7 +98,7 @@ describe("Stripe Webhook Worker", () => {
 
       expect(dbWrites.length).toBe(1);
       expect(dbWrites[0].url).toContain("/rest/v1/subscriptions");
-      expect(dbWrites[0].body.user_id).toBe("user-test-99");
+      expect(dbWrites[0].body.user_id).toBe("user_test_99");
       expect(dbWrites[0].body.stripe_customer_id).toBe("cus_stripe_111");
       expect(dbWrites[0].body.stripe_subscription_id).toBe("sub_stripe_222");
       expect(dbWrites[0].body.tier).toBe("pro");

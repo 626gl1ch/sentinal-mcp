@@ -1,5 +1,5 @@
 {
-  "name": "bastionmcp-connector-ohlcv",
+  "name": "sentinal-mcp-connector-ohlcv",
   "version": "1.0.0",
   "private": true,
   "scripts": {

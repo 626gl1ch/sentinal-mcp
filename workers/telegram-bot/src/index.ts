@@ -381,8 +381,8 @@ async function handleRegisterCommand(env: Env, chat_id: string, text: string) {
   }
 
   const rawKey = parts[1].trim();
-  if (!rawKey.startsWith("bm_")) {
-    await sendTelegramMessage(env, chat_id, "⚠️ Invalid key format. Bastion API keys start with 'bm_'.");
+  if (!rawKey.startsWith("smc_") && !rawKey.startsWith("bm_")) {
+    await sendTelegramMessage(env, chat_id, "⚠️ Invalid key format. Sentinal API keys start with 'smc_'.");
     return;
   }
 

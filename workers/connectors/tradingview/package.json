@@ -1,5 +1,5 @@
 {
-  "name": "bastionmcp-connector-tradingview",
+  "name": "sentinal-mcp-connector-tradingview",
   "version": "1.0.0",
   "private": true,
   "scripts": {

@@ -1,5 +1,5 @@
 {
-  "name": "bastionmcp-connector-bybit",
+  "name": "sentinal-mcp-connector-bybit",
   "version": "1.0.0",
   "private": true,
   "scripts": {
