@@ -1,5 +1,162 @@
 import { createClient } from "@supabase/supabase-js";
 
+// --- Universal Polyfills for Opera Mini & Legacy Mobile Browsers ---
+
+// 1. TextEncoder Fallback
+if (typeof window !== "undefined" && typeof window.TextEncoder === "undefined") {
+  window.TextEncoder = function TextEncoder() {};
+  window.TextEncoder.prototype.encode = function (string) {
+    const octets = [];
+    const length = string.length;
+    let i = 0;
+    while (i < length) {
+      const codeValue = string.charCodeAt(i);
+      if (codeValue < 0x80) {
+        octets.push(codeValue);
+      } else if (codeValue < 0x800) {
+        octets.push(0xc0 | (codeValue >> 6), 0x80 | (codeValue & 0x3f));
+      } else {
+        octets.push(
+          0xe0 | (codeValue >> 12),
+          0x80 | ((codeValue >> 6) & 0x3f),
+          0x80 | (codeValue & 0x3f)
+        );
+      }
+      i++;
+    }
+    return new Uint8Array(octets);
+  };
+}
+
+// 2. Safe Random Bytes Generator (WebCrypto + Opera Mini Fallback)
+function safeGetRandomBytes(length) {
+  const bytes = new Uint8Array(length);
+  if (typeof window !== "undefined" && window.crypto && typeof window.crypto.getRandomValues === "function") {
+    window.crypto.getRandomValues(bytes);
+  } else {
+    // Pure JS Entropy Fallback for Opera Mini / legacy proxy browsers
+    for (let i = 0; i < length; i++) {
+      const entropy = Math.floor(
+        (Math.random() * 0x100000000 + Date.now() + (performance.now ? performance.now() * 1000 : 0)) % 256
+      );
+      bytes[i] = entropy & 0xff;
+    }
+  }
+  return bytes;
+}
+
+// 3. Pure JS SHA-256 Fallback for Opera Mini
+function jsSha256(ascii) {
+  function rightRotate(value, amount) {
+    return (value >>> amount) | (value << (32 - amount));
+  }
+  const mathPow = Math.pow;
+  const maxWord = mathPow(2, 32);
+  let result = "";
+  const words = [];
+  const asciiLength = ascii.length * 8;
+  const hash = [
+    0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a,
+    0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19
+  ];
+  const k = [
+    0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
+    0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
+    0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
+    0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967,
+    0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85,
+    0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
+    0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
+    0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2
+  ];
+
+  let i = 0;
+  for (; i < ascii.length; i++) {
+    words[i >> 2] |= (ascii.charCodeAt(i) & 0xff) << (24 - (i % 4) * 8);
+  }
+  words[ascii.length >> 2] |= 0x80 << (24 - (ascii.length % 4) * 8);
+  words[((ascii.length + 8) >> 6 << 4) + 15] = asciiLength;
+
+  for (i = 0; i < words.length; i += 16) {
+    const w = words.slice(i, i + 16);
+    let a = hash[0], b = hash[1], c = hash[2], d = hash[3];
+    let e = hash[4], f = hash[5], g = hash[6], h = hash[7];
+
+    for (let j = 0; j < 64; j++) {
+      if (j >= 16) {
+        const s0 = rightRotate(w[j - 15], 7) ^ rightRotate(w[j - 15], 18) ^ (w[j - 15] >>> 3);
+        const s1 = rightRotate(w[j - 2], 17) ^ rightRotate(w[j - 2], 19) ^ (w[j - 2] >>> 10);
+        w[j] = (w[j - 16] + s0 + w[j - 7] + s1) | 0;
+      }
+
+      const ch = (e & f) ^ (~e & g);
+      const maj = (a & b) ^ (a & c) ^ (b & c);
+      const temp1 = (h + (rightRotate(e, 6) ^ rightRotate(e, 11) ^ rightRotate(e, 25)) + ch + k[j] + (w[j] || 0)) | 0;
+      const temp2 = ((rightRotate(a, 2) ^ rightRotate(a, 13) ^ rightRotate(a, 22)) + maj) | 0;
+
+      h = g; g = f; f = e; e = (d + temp1) | 0;
+      d = c; c = b; b = a; a = (temp1 + temp2) | 0;
+    }
+
+    hash[0] = (hash[0] + a) | 0;
+    hash[1] = (hash[1] + b) | 0;
+    hash[2] = (hash[2] + c) | 0;
+    hash[3] = (hash[3] + d) | 0;
+    hash[4] = (hash[4] + e) | 0;
+    hash[5] = (hash[5] + f) | 0;
+    hash[6] = (hash[6] + g) | 0;
+    hash[7] = (hash[7] + h) | 0;
+  }
+
+  for (i = 0; i < 8; i++) {
+    for (let j = 3; j >= 0; j--) {
+      const b = (hash[i] >> (j * 8)) & 255;
+      result += (b < 16 ? "0" : "") + b.toString(16);
+    }
+  }
+  return result;
+}
+
+async function safeSha256Hex(text) {
+  if (typeof window !== "undefined" && window.crypto && window.crypto.subtle && typeof window.crypto.subtle.digest === "function") {
+    try {
+      const hashBuffer = await window.crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
+      return Array.from(new Uint8Array(hashBuffer))
+        .map((b) => b.toString(16).padStart(2, "0"))
+        .join("");
+    } catch (e) {
+      console.warn("Subtle crypto failed, using JS SHA-256 fallback", e);
+    }
+  }
+  return jsSha256(text);
+}
+
+// 4. Safe Clipboard Copy Helper (Clipboard API + Opera Mini Fallback)
+function safeCopyText(text) {
+  if (typeof navigator !== "undefined" && navigator.clipboard && typeof navigator.clipboard.writeText === "function") {
+    navigator.clipboard.writeText(text).catch(() => fallbackCopy(text));
+  } else {
+    fallbackCopy(text);
+  }
+}
+
+function fallbackCopy(text) {
+  try {
+    const textArea = document.createElement("textarea");
+    textArea.value = text;
+    textArea.style.position = "fixed";
+    textArea.style.top = "-9999px";
+    textArea.style.left = "-9999px";
+    document.body.appendChild(textArea);
+    textArea.focus();
+    textArea.select();
+    document.execCommand("copy");
+    document.body.removeChild(textArea);
+  } catch (e) {
+    console.error("Fallback copy failed", e);
+  }
+}
+
 // --- Configuration Setup (with Sentinel-MCP namespace & legacy fallback) ---
 const config = {
   supabaseUrl:
@@ -126,6 +283,7 @@ let activeUserApiKey = "";
 
 // --- Toast System ---
 function showToast(title, message, type = "info", duration = 4000) {
+  if (!toastContainer) return;
   const toast = document.createElement("div");
   toast.className = `toast ${type}`;
 
@@ -148,13 +306,17 @@ function showToast(title, message, type = "info", duration = 4000) {
 
   setTimeout(() => {
     toast.classList.add("toast-out");
-    toast.addEventListener("animationend", () => toast.remove());
+    setTimeout(() => toast.remove(), 300);
   }, duration);
 }
 
 // --- Custom Confirm Modal Helper ---
 function customConfirm(title, message, actionText = "Confirm") {
   return new Promise((resolve) => {
+    if (!confirmModal) {
+      resolve(window.confirm(`${title}\n\n${message}`));
+      return;
+    }
     confirmModalTitle.textContent = title;
     confirmModalBody.textContent = message;
     confirmModalOk.textContent = actionText;
@@ -177,6 +339,10 @@ function customConfirm(title, message, actionText = "Confirm") {
 // --- Custom Prompt API Key Modal Helper ---
 function customPromptApiKey() {
   return new Promise((resolve) => {
+    if (!apiKeyInputModal) {
+      resolve(window.prompt("Enter one of your active API keys to authorize vault upload:"));
+      return;
+    }
     apiKeyPromptInput.value = "";
     apiKeyInputModal.classList.remove("hidden");
     apiKeyPromptInput.focus();
@@ -201,7 +367,6 @@ function customPromptApiKey() {
 
 // --- Application Init ---
 function init() {
-  // Populate Settings inputs with current values
   if (cfgSbUrl) cfgSbUrl.value = config.supabaseUrl;
   if (cfgSbKey) cfgSbKey.value = config.supabaseAnonKey;
   if (cfgGtUrl) cfgGtUrl.value = config.gatewayUrl;
@@ -212,7 +377,6 @@ function init() {
     return;
   }
 
-  // Auth State Listener
   supabase.auth.onAuthStateChange((event, session) => {
     if (session) {
       currentUser = session.user;
@@ -234,21 +398,21 @@ function setupSettingsListenerOnly() {
 }
 
 function showSetupNotification() {
-  authScreen.classList.remove("hidden");
-  dashboardLayout.classList.add("hidden");
-  authError.classList.remove("hidden");
-  authError.innerHTML = "<strong>Setup Required:</strong> Please configure your Supabase URL & Anon Key in the Settings tab or localStorage.";
+  if (authScreen) authScreen.classList.remove("hidden");
+  if (dashboardLayout) dashboardLayout.classList.add("hidden");
+  if (authError) {
+    authError.classList.remove("hidden");
+    authError.innerHTML = "<strong>Setup Required:</strong> Please configure your Supabase URL & Anon Key in the Settings tab or localStorage.";
+  }
 }
 
 // --- Event Listeners ---
 function setupEventListeners() {
-  // Auth
-  authForm.addEventListener("submit", handleLogin);
-  btnSignup.addEventListener("click", handleSignup);
-  btnLogout.addEventListener("click", handleLogout);
+  if (authForm) authForm.addEventListener("submit", handleLogin);
+  if (btnSignup) btnSignup.addEventListener("click", handleSignup);
+  if (btnLogout) btnLogout.addEventListener("click", handleLogout);
   if (btnLogoutSettings) btnLogoutSettings.addEventListener("click", handleLogout);
 
-  // Navigation Tab Switching
   navItems.forEach(item => {
     item.addEventListener("click", () => {
       navItems.forEach(nav => nav.classList.remove("active"));
@@ -265,74 +429,81 @@ function setupEventListeners() {
     });
   });
 
-  // Vault form fields toggle
-  vaultConnector.addEventListener("change", (e) => {
-    if (e.target.value === "mt5") {
-      connectorFieldsMt5.classList.remove("hidden");
-      connectorFieldsBybit.classList.add("hidden");
-    } else {
-      connectorFieldsMt5.classList.add("hidden");
-      connectorFieldsBybit.classList.remove("hidden");
-    }
-  });
+  if (vaultConnector) {
+    vaultConnector.addEventListener("change", (e) => {
+      if (e.target.value === "mt5") {
+        if (connectorFieldsMt5) connectorFieldsMt5.classList.remove("hidden");
+        if (connectorFieldsBybit) connectorFieldsBybit.classList.add("hidden");
+      } else {
+        if (connectorFieldsMt5) connectorFieldsMt5.classList.add("hidden");
+        if (connectorFieldsBybit) connectorFieldsBybit.classList.remove("hidden");
+      }
+    });
+  }
 
-  // Forms
-  vaultForm.addEventListener("submit", handleVaultSubmission);
-  keyGenerationForm.addEventListener("submit", handleApiKeyGeneration);
+  if (vaultForm) vaultForm.addEventListener("submit", handleVaultSubmission);
+  if (keyGenerationForm) keyGenerationForm.addEventListener("submit", handleApiKeyGeneration);
 
-  // Trading bot strategy toggle
-  presetStrategy.addEventListener("change", (e) => {
-    if (e.target.value === "trailing_stop") {
-      presetTrailingContainer.classList.remove("hidden");
-    } else {
-      presetTrailingContainer.classList.add("hidden");
-    }
-  });
+  if (presetStrategy) {
+    presetStrategy.addEventListener("change", (e) => {
+      if (e.target.value === "trailing_stop") {
+        if (presetTrailingContainer) presetTrailingContainer.classList.remove("hidden");
+      } else {
+        if (presetTrailingContainer) presetTrailingContainer.classList.add("hidden");
+      }
+    });
+  }
 
-  botPresetForm.addEventListener("submit", handlePresetSubmission);
+  if (botPresetForm) botPresetForm.addEventListener("submit", handlePresetSubmission);
   if (btnUnlinkTg) btnUnlinkTg.addEventListener("click", handleUnlinkTelegram);
 
-  // Settings save
   if (cfgSaveBtn) cfgSaveBtn.addEventListener("click", handleSaveSettings);
 
-  // Key Modal Close & Copy
-  btnCloseModal.addEventListener("click", () => keyModal.classList.add("hidden"));
-  btnCopyKey.addEventListener("click", copyKeyToClipboard);
+  if (btnCloseModal) btnCloseModal.addEventListener("click", () => keyModal.classList.add("hidden"));
+  if (btnCopyKey) btnCopyKey.addEventListener("click", copyKeyToClipboard);
 }
 
 // --- Auth Operations ---
 async function handleLogin(e) {
   e.preventDefault();
-  authError.classList.add("hidden");
-  btnLogin.disabled = true;
-  btnLogin.textContent = "Authenticating…";
+  if (authError) authError.classList.add("hidden");
+  if (btnLogin) {
+    btnLogin.disabled = true;
+    btnLogin.textContent = "Authenticating…";
+  }
 
-  const email = authEmail.value.trim();
-  const password = authPassword.value;
+  const email = authEmail ? authEmail.value.trim() : "";
+  const password = authPassword ? authPassword.value : "";
 
   try {
     const { error } = await supabase.auth.signInWithPassword({ email, password });
     if (error) throw error;
     showToast("Signed In", `Welcome back, ${email}`, "success");
   } catch (err) {
-    authError.classList.remove("hidden");
-    authError.textContent = `Authentication failed: ${err.message}`;
+    if (authError) {
+      authError.classList.remove("hidden");
+      authError.textContent = `Authentication failed: ${err.message}`;
+    }
     showToast("Auth Error", err.message, "error");
   } finally {
-    btnLogin.disabled = false;
-    btnLogin.textContent = "Sign In";
+    if (btnLogin) {
+      btnLogin.disabled = false;
+      btnLogin.textContent = "Sign In";
+    }
   }
 }
 
 async function handleSignup(e) {
   e.preventDefault();
-  authError.classList.add("hidden");
-  const email = authEmail.value.trim();
-  const password = authPassword.value;
+  if (authError) authError.classList.add("hidden");
+  const email = authEmail ? authEmail.value.trim() : "";
+  const password = authPassword ? authPassword.value : "";
 
   if (!email || !password) {
-    authError.classList.remove("hidden");
-    authError.textContent = "Please provide both email and password.";
+    if (authError) {
+      authError.classList.remove("hidden");
+      authError.textContent = "Please provide both email and password.";
+    }
     return;
   }
 
@@ -343,14 +514,18 @@ async function handleSignup(e) {
       options: { data: { display_name: email.split("@")[0] } }
     });
     if (error) throw error;
-    authError.classList.remove("hidden");
-    authError.className = "success-msg";
-    authError.textContent = "Registration successful! Please check your email for confirmation, or log in.";
+    if (authError) {
+      authError.classList.remove("hidden");
+      authError.className = "success-msg";
+      authError.textContent = "Registration successful! Please check your email for confirmation, or log in.";
+    }
     showToast("Registration Complete", "Please check your inbox to confirm.", "info");
   } catch (err) {
-    authError.classList.remove("hidden");
-    authError.className = "error-msg";
-    authError.textContent = `Registration Error: ${err.message}`;
+    if (authError) {
+      authError.classList.remove("hidden");
+      authError.className = "error-msg";
+      authError.textContent = `Registration Error: ${err.message}`;
+    }
     showToast("Registration Failed", err.message, "error");
   }
 }
@@ -365,23 +540,20 @@ async function handleLogout() {
 
 // --- UI Navigation Operations ---
 function showAuth() {
-  authScreen.classList.remove("hidden");
-  dashboardLayout.classList.add("hidden");
+  if (authScreen) authScreen.classList.remove("hidden");
+  if (dashboardLayout) dashboardLayout.classList.add("hidden");
 }
 
 async function showDashboard() {
-  authScreen.classList.add("hidden");
-  dashboardLayout.classList.remove("hidden");
+  if (authScreen) authScreen.classList.add("hidden");
+  if (dashboardLayout) dashboardLayout.classList.remove("hidden");
 
-  // Set user display details
-  userDisplayEmail.textContent = currentUser.email;
+  if (userDisplayEmail) userDisplayEmail.textContent = currentUser.email;
   if (settingsDisplayEmail) settingsDisplayEmail.textContent = currentUser.email;
   if (userAvatarInitial) userAvatarInitial.textContent = currentUser.email.charAt(0).toUpperCase();
 
-  // Load active connector indicators immediately
   loadConnectorStatuses();
 
-  // Load all dashboard components IN PARALLEL via Promise.all for zero-lag response
   try {
     await Promise.all([
       loadSubscriptionInfo(),
@@ -395,7 +567,7 @@ async function showDashboard() {
   }
 }
 
-// --- Parallel Data Loading Operations ---
+// --- Data Loading Operations ---
 
 async function loadSubscriptionInfo() {
   try {
@@ -405,10 +577,12 @@ async function loadSubscriptionInfo() {
       .eq("user_id", currentUser.id);
 
     if (error) throw error;
-    if (data && data.length > 0) {
-      userDisplayTier.textContent = `${data[0].tier.toUpperCase()} (${data[0].status.toUpperCase()})`;
-    } else {
-      userDisplayTier.textContent = "FREE PLAN";
+    if (userDisplayTier) {
+      if (data && data.length > 0) {
+        userDisplayTier.textContent = `${data[0].tier.toUpperCase()} (${data[0].status.toUpperCase()})`;
+      } else {
+        userDisplayTier.textContent = "FREE PLAN";
+      }
     }
   } catch (err) {
     console.error("Failed to load subscription info", err);
@@ -427,7 +601,6 @@ async function loadApiKeys() {
     if (error) throw error;
 
     if (keys && keys.length > 0) {
-      // Check for locally cached raw key (checking both sentinel and legacy bastion namespaces)
       const prefix = keys[0].key_prefix;
       const savedKey =
         localStorage.getItem(`sentinel_raw_key_${prefix}`) ||
@@ -437,8 +610,9 @@ async function loadApiKeys() {
       }
     }
 
-    statApiKeys.textContent = keys ? keys.length.toString() : "0";
+    if (statApiKeys) statApiKeys.textContent = keys ? keys.length.toString() : "0";
 
+    if (!apiKeysTableBody) return;
     apiKeysTableBody.innerHTML = "";
     if (!keys || keys.length === 0) {
       apiKeysTableBody.innerHTML = `<tr><td colspan="5" style="text-align:center; color:var(--text-muted); padding:16px;">No active API keys found. Generate one to connect clients.</td></tr>`;
@@ -457,7 +631,6 @@ async function loadApiKeys() {
       apiKeysTableBody.appendChild(row);
     });
 
-    // Revoke Handlers
     document.querySelectorAll(".btn-revoke-key").forEach(btn => {
       btn.addEventListener("click", async (e) => {
         const keyId = e.currentTarget.getAttribute("data-id");
@@ -482,8 +655,9 @@ async function loadVaultCredentials() {
 
     if (error) throw error;
 
-    statActiveCredentials.textContent = creds ? creds.length.toString() : "0";
+    if (statActiveCredentials) statActiveCredentials.textContent = creds ? creds.length.toString() : "0";
 
+    if (!credentialsListContainer) return;
     credentialsListContainer.innerHTML = "";
     if (!creds || creds.length === 0) {
       credentialsListContainer.innerHTML = `<div style="text-align:center; color:var(--text-muted); padding:24px;">No credentials saved in vault.</div>`;
@@ -536,48 +710,50 @@ async function loadAuditAndUsageLogs() {
     if (auditRes.error) throw auditRes.error;
     const audits = auditRes.data;
 
-    // Recent console output
-    recentLogsConsole.innerHTML = "";
-    if (!audits || audits.length === 0) {
-      recentLogsConsole.innerHTML = `<div class="log-line"><span style="color:var(--text-muted)">No recent system events.</span></div>`;
-    } else {
-      audits.slice(0, 5).forEach(log => {
-        const line = document.createElement("div");
-        line.className = "log-line";
-        line.innerHTML = `
-          <span class="log-time">[${new Date(log.created_at).toLocaleTimeString()}]</span>
-          <span class="log-action">${log.action.toUpperCase()}</span>
-          <span class="log-msg">${escapeHtml(JSON.stringify(log.metadata))}</span>
-        `;
-        recentLogsConsole.appendChild(line);
-      });
+    if (recentLogsConsole) {
+      recentLogsConsole.innerHTML = "";
+      if (!audits || audits.length === 0) {
+        recentLogsConsole.innerHTML = `<div class="log-line"><span style="color:var(--text-muted)">No recent system events.</span></div>`;
+      } else {
+        audits.slice(0, 5).forEach(log => {
+          const line = document.createElement("div");
+          line.className = "log-line";
+          line.innerHTML = `
+            <span class="log-time">[${new Date(log.created_at).toLocaleTimeString()}]</span>
+            <span class="log-action">${log.action.toUpperCase()}</span>
+            <span class="log-msg">${escapeHtml(JSON.stringify(log.metadata))}</span>
+          `;
+          recentLogsConsole.appendChild(line);
+        });
+      }
     }
 
-    // Security Audit table
-    auditLogsTableBody.innerHTML = "";
-    if (!audits || audits.length === 0) {
-      auditLogsTableBody.innerHTML = `<tr><td colspan="3" style="text-align:center; color:var(--text-muted); padding:16px;">No audit trail recorded yet.</td></tr>`;
-    } else {
-      audits.forEach(log => {
-        const row = document.createElement("tr");
-        row.innerHTML = `
-          <td>${new Date(log.created_at).toLocaleString()}</td>
-          <td><code>${log.action}</code></td>
-          <td><code>${escapeHtml(JSON.stringify(log.metadata))}</code></td>
-        `;
-        auditLogsTableBody.appendChild(row);
-      });
+    if (auditLogsTableBody) {
+      auditLogsTableBody.innerHTML = "";
+      if (!audits || audits.length === 0) {
+        auditLogsTableBody.innerHTML = `<tr><td colspan="3" style="text-align:center; color:var(--text-muted); padding:16px;">No audit trail recorded yet.</td></tr>`;
+      } else {
+        audits.forEach(log => {
+          const row = document.createElement("tr");
+          row.innerHTML = `
+            <td>${new Date(log.created_at).toLocaleString()}</td>
+            <td><code>${log.action}</code></td>
+            <td><code>${escapeHtml(JSON.stringify(log.metadata))}</code></td>
+          `;
+          auditLogsTableBody.appendChild(row);
+        });
+      }
     }
 
-    // Rate Limit display
     const requestCount = usageRes.count || 0;
-    statRateLimit.textContent = `${requestCount} / 10,000`;
+    if (statRateLimit) statRateLimit.textContent = `${requestCount} / 10,000`;
   } catch (err) {
     console.error("Failed to load system logs", err);
   }
 }
 
 function loadConnectorStatuses() {
+  if (!connectorsStatusTable) return;
   connectorsStatusTable.innerHTML = `
     <tr>
       <td><code>mt5</code></td>
@@ -598,8 +774,8 @@ function loadConnectorStatuses() {
 
 async function handleVaultSubmission(e) {
   e.preventDefault();
-  vaultSuccess.classList.add("hidden");
-  vaultErrorMsg.classList.add("hidden");
+  if (vaultSuccess) vaultSuccess.classList.add("hidden");
+  if (vaultErrorMsg) vaultErrorMsg.classList.add("hidden");
 
   if (!activeUserApiKey) {
     const inputKey = await customPromptApiKey();
@@ -610,14 +786,14 @@ async function handleVaultSubmission(e) {
     activeUserApiKey = inputKey;
   }
 
-  const connectorId = vaultConnector.value;
-  const label = vaultLabel.value.trim();
+  const connectorId = vaultConnector ? vaultConnector.value : "";
+  const label = vaultLabel ? vaultLabel.value.trim() : "";
   let credentialsObj = {};
 
   if (connectorId === "mt5") {
     credentialsObj = {
-      bridgeUrl: mt5Url.value.trim(),
-      bridgeToken: mt5Token.value.trim() || undefined
+      bridgeUrl: mt5Url ? mt5Url.value.trim() : "",
+      bridgeToken: (mt5Token && mt5Token.value.trim()) || undefined
     };
     if (!credentialsObj.bridgeUrl) {
       showVaultError("Bridge URL is required for MT5 connector.");
@@ -625,9 +801,9 @@ async function handleVaultSubmission(e) {
     }
   } else {
     credentialsObj = {
-      apiKey: bybitKey.value.trim(),
-      apiSecret: bybitSecret.value.trim(),
-      useTestnet: bybitTestnet.checked
+      apiKey: bybitKey ? bybitKey.value.trim() : "",
+      apiSecret: bybitSecret ? bybitSecret.value.trim() : "",
+      useTestnet: bybitTestnet ? bybitTestnet.checked : false
     };
     if (!credentialsObj.apiKey || !credentialsObj.apiSecret) {
       showVaultError("API Key and Secret are required for Bybit connector.");
@@ -652,8 +828,8 @@ async function handleVaultSubmission(e) {
 
     const data = await res.json();
     if (data.success) {
-      vaultSuccess.classList.remove("hidden");
-      vaultForm.reset();
+      if (vaultSuccess) vaultSuccess.classList.remove("hidden");
+      if (vaultForm) vaultForm.reset();
       showToast("Vault Updated", "Credentials encrypted and saved securely.", "success");
       await Promise.all([loadVaultCredentials(), loadAuditAndUsageLogs()]);
     } else {
@@ -666,8 +842,10 @@ async function handleVaultSubmission(e) {
 }
 
 function showVaultError(msg) {
-  vaultErrorMsg.classList.remove("hidden");
-  vaultErrorMsg.textContent = `Upload failed: ${msg}`;
+  if (vaultErrorMsg) {
+    vaultErrorMsg.classList.remove("hidden");
+    vaultErrorMsg.textContent = `Upload failed: ${msg}`;
+  }
 }
 
 async function deleteCredentials(id) {
@@ -695,17 +873,16 @@ async function deleteCredentials(id) {
 
 async function handleApiKeyGeneration(e) {
   e.preventDefault();
-  const label = keyLabel.value.trim();
+  const label = keyLabel ? keyLabel.value.trim() : "";
 
-  // Generate cryptographically secure random key with new Sentinal-MCP prefix "smc_"
+  // Universal Safe Random Bytes Generator (WebCrypto + Opera Mini Fallback)
   const prefix = "smc_";
-  const randBytes = crypto.getRandomValues(new Uint8Array(20));
+  const randBytes = safeGetRandomBytes(20);
   const hexKey = Array.from(randBytes).map(b => b.toString(16).padStart(2, "0")).join("");
   const rawKey = prefix + hexKey;
 
-  // SHA-256 Digest
-  const hashBuffer = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(rawKey));
-  const keyHash = Array.from(new Uint8Array(hashBuffer)).map(b => b.toString(16).padStart(2, "0")).join("");
+  // Universal Safe SHA-256 Digest (WebCrypto + Pure JS Fallback)
+  const keyHash = await safeSha256Hex(rawKey);
   const keyPrefix = rawKey.substring(0, 8);
 
   try {
@@ -724,13 +901,12 @@ async function handleApiKeyGeneration(e) {
       metadata: { label, prefix: keyPrefix }
     });
 
-    // Save in localStorage under new sentinel namespace
     localStorage.setItem(`sentinel_raw_key_${keyPrefix}`, rawKey);
     activeUserApiKey = rawKey;
 
-    newKeyDisplay.textContent = rawKey;
-    keyModal.classList.remove("hidden");
-    keyGenerationForm.reset();
+    if (newKeyDisplay) newKeyDisplay.textContent = rawKey;
+    if (keyModal) keyModal.classList.remove("hidden");
+    if (keyGenerationForm) keyGenerationForm.reset();
 
     showToast("API Key Generated", "Copy your key before closing the modal.", "success");
     await Promise.all([loadApiKeys(), loadAuditAndUsageLogs()]);
@@ -762,10 +938,14 @@ async function revokeApiKey(id) {
 }
 
 function copyKeyToClipboard() {
-  navigator.clipboard.writeText(newKeyDisplay.textContent);
-  btnCopyKey.textContent = "Copied!";
-  showToast("Copied to Clipboard", "API Key copied safely.", "info");
-  setTimeout(() => btnCopyKey.textContent = "Copy", 1800);
+  if (newKeyDisplay) {
+    safeCopyText(newKeyDisplay.textContent);
+    if (btnCopyKey) btnCopyKey.textContent = "Copied!";
+    showToast("Copied to Clipboard", "API Key copied safely.", "info");
+    setTimeout(() => {
+      if (btnCopyKey) btnCopyKey.textContent = "Copy";
+    }, 1800);
+  }
 }
 
 // --- Trading Bot Operations ---
@@ -778,20 +958,22 @@ async function loadBotSettingsAndStates() {
       supabase.from("trading_states").select("symbol, state, bias_direction, position_taken_over").eq("user_id", currentUser.id)
     ]);
 
-    // 1. Telegram settings
     if (tgRes.data && tgRes.data.length > 0) {
-      tgChatIdInput.value = tgRes.data[0].telegram_chat_id;
+      if (tgChatIdInput) tgChatIdInput.value = tgRes.data[0].telegram_chat_id;
       if (btnUnlinkTg) btnUnlinkTg.classList.remove("hidden");
-      tgStatusMessage.className = "tg-status-box linked";
-      tgStatusMessage.innerHTML = `✓ <strong>LINKED</strong> to Telegram Chat ID: <code>${tgRes.data[0].telegram_chat_id}</code>`;
+      if (tgStatusMessage) {
+        tgStatusMessage.className = "tg-status-box linked";
+        tgStatusMessage.innerHTML = `✓ <strong>LINKED</strong> to Telegram Chat ID: <code>${tgRes.data[0].telegram_chat_id}</code>`;
+      }
     } else {
-      tgChatIdInput.value = "";
+      if (tgChatIdInput) tgChatIdInput.value = "";
       if (btnUnlinkTg) btnUnlinkTg.classList.add("hidden");
-      tgStatusMessage.className = "tg-status-box";
-      tgStatusMessage.innerHTML = `No Telegram chat linked. Start the bot on Telegram and register with your API Key to link.`;
+      if (tgStatusMessage) {
+        tgStatusMessage.className = "tg-status-box";
+        tgStatusMessage.innerHTML = `No Telegram chat linked. Start the bot on Telegram and register with your API Key to link.`;
+      }
     }
 
-    // 2. Map presets and state machines
     const symbolMap = new Map();
     if (presetRes.data) {
       presetRes.data.forEach(p => symbolMap.set(p.symbol.toUpperCase(), { preset: p, state: null }));
@@ -807,6 +989,7 @@ async function loadBotSettingsAndStates() {
       });
     }
 
+    if (!botStatesTableBody) return;
     botStatesTableBody.innerHTML = "";
     if (symbolMap.size === 0) {
       botStatesTableBody.innerHTML = `<tr><td colspan="5" style="text-align:center; color:var(--text-muted); padding:16px;">No active presets or state machine symbols.</td></tr>`;
@@ -918,17 +1101,19 @@ async function handleUnlinkTelegram() {
 
 async function handlePresetSubmission(e) {
   e.preventDefault();
-  presetSuccess.classList.add("hidden");
-  presetError.classList.add("hidden");
+  if (presetSuccess) presetSuccess.classList.add("hidden");
+  if (presetError) presetError.classList.add("hidden");
 
-  const symbol = presetSymbol.value.trim().toUpperCase();
-  const tpPct = parseFloat(presetTpPct.value);
-  const strategy = presetStrategy.value;
-  const trailingStopPct = strategy === "trailing_stop" ? parseFloat(presetTrailingPct.value) : null;
+  const symbol = presetSymbol ? presetSymbol.value.trim().toUpperCase() : "";
+  const tpPct = presetTpPct ? parseFloat(presetTpPct.value) : 0;
+  const strategy = presetStrategy ? presetStrategy.value : "fixed_tp";
+  const trailingStopPct = strategy === "trailing_stop" && presetTrailingPct ? parseFloat(presetTrailingPct.value) : null;
 
   if (strategy === "trailing_stop" && (!trailingStopPct || isNaN(trailingStopPct) || trailingStopPct <= 0)) {
-    presetError.classList.remove("hidden");
-    presetError.textContent = "Please enter a valid positive trailing stop percentage.";
+    if (presetError) {
+      presetError.classList.remove("hidden");
+      presetError.textContent = "Please enter a valid positive trailing stop percentage.";
+    }
     return;
   }
 
@@ -946,23 +1131,25 @@ async function handlePresetSubmission(e) {
 
     if (error) throw error;
 
-    presetSuccess.classList.remove("hidden");
-    botPresetForm.reset();
-    presetTrailingContainer.classList.add("hidden");
+    if (presetSuccess) presetSuccess.classList.remove("hidden");
+    if (botPresetForm) botPresetForm.reset();
+    if (presetTrailingContainer) presetTrailingContainer.classList.add("hidden");
     showToast("Preset Saved", `Preset for ${symbol} configured successfully.`, "success");
     await loadBotSettingsAndStates();
   } catch (err) {
-    presetError.classList.remove("hidden");
-    presetError.textContent = `Save failed: ${err.message}`;
+    if (presetError) {
+      presetError.classList.remove("hidden");
+      presetError.textContent = `Save failed: ${err.message}`;
+    }
     showToast("Save Error", err.message, "error");
   }
 }
 
 // --- Settings Handler ---
 function handleSaveSettings() {
-  const url = cfgSbUrl.value.trim();
-  const key = cfgSbKey.value.trim();
-  const gt = cfgGtUrl.value.trim();
+  const url = cfgSbUrl ? cfgSbUrl.value.trim() : "";
+  const key = cfgSbKey ? cfgSbKey.value.trim() : "";
+  const gt = cfgGtUrl ? cfgGtUrl.value.trim() : "";
 
   if (url) {
     localStorage.setItem("SENTINEL_SUPABASE_URL", url);
